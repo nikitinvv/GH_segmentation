@@ -1,33 +1,29 @@
-import numpy as np 
-import os
+import numpy as np
+import tensorflow as tf
+import os 
+
 import skimage.io as io
 import skimage.transform as trans
-import numpy as np
-from keras.models import *
-from keras.layers import *
-from keras.optimizers import *
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from tensorflow.keras.models import *
+from tensorflow.keras.layers import *
+from tensorflow.keras.optimizers import *
+from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
 
-from keras.models import Model
-from keras.layers.core import Dense, Dropout, Activation
-from keras.layers.convolutional import Conv2D
-from keras.layers.pooling import MaxPooling2D
-from keras.layers.pooling import GlobalAveragePooling2D
-from keras.layers import Input, Concatenate
-from keras.layers.normalization import BatchNormalization
-from keras.regularizers import l2
-import keras.backend as K
-from keras import losses
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Dropout, Activation, concatenate
+from tensorflow.keras.layers import Conv2D, UpSampling2D
+from tensorflow.keras.layers import MaxPooling2D
+from tensorflow.keras.layers import GlobalAveragePooling2D
+from tensorflow.keras.layers import Input, Concatenate
+from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.optimizers import Adam
 from tensorflow import Tensor
-
 from keras.utils import multi_gpu_model
 
 smooth = 1.
 dropout_rate = 0.5
 
-##############################################################################################################################
-
-# define the custom loss functions 
+# define custom loss functions 
 
 def jaccard_distance_loss(y_true, y_pred, smooth=100):
 
@@ -66,13 +62,6 @@ def dice_coef(y_true, y_pred):
     y_pred_f = K.flatten(y_pred)
     intersection = K.sum(y_true_f * y_pred_f)
     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
-
-
-def bce_dice_loss(y_true, y_pred):
-    return 0.5 * losses.binary_crossentropy(y_true, y_pred) - dice_coef(y_true, y_pred)
-
-
-##############################################################################################################################
 
 # Define the Deep learning models using functional Keras API: 
 # 1. Unet 
@@ -121,70 +110,13 @@ def unet(pretrained_weights = None,input_size = (512,512,1)):
     conv9 = Conv2D(2, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
     conv10 = Conv2D(1, 1, activation = 'sigmoid')(conv9)
 
-    model = Model(input = inputs, output = conv10)
-
-    model.compile(optimizer = Adam(lr = 1e-4), loss = 'binary_crossentropy', metrics = ['accuracy'])
-    
-    #model.summary()
+    model = Model(inputs = inputs, outputs = conv10)
 
     if(pretrained_weights):
     	model.load_weights(pretrained_weights)
 
     return model
 
-
-def unet_multiGPU(pretrained_weights = None,input_size = (512,512,1),GPU_list = [0, 1]):
-    inputs = Input(input_size)
-    conv1 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(inputs)
-    conv1 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv1)
-    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
-    conv2 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool1)
-    conv2 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv2)
-    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
-    conv3 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool2)
-    conv3 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv3)
-    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
-    conv4 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool3)
-    conv4 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv4)
-    drop4 = Dropout(0.5)(conv4)
-    pool4 = MaxPooling2D(pool_size=(2, 2))(drop4)
-
-    conv5 = Conv2D(1024, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool4)
-    conv5 = Conv2D(1024, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv5)
-    drop5 = Dropout(0.5)(conv5)
-
-    up6 = Conv2D(512, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(drop5))
-    merge6 = concatenate([drop4,up6], axis = 3)
-    conv6 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge6)
-    conv6 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv6)
-
-    up7 = Conv2D(256, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(conv6))
-    merge7 = concatenate([conv3,up7], axis = 3)
-    conv7 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge7)
-    conv7 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv7)
-
-    up8 = Conv2D(128, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(conv7))
-    merge8 = concatenate([conv2,up8], axis = 3)
-    conv8 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge8)
-    conv8 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv8)
-
-    up9 = Conv2D(64, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(conv8))
-    merge9 = concatenate([conv1,up9], axis = 3)
-    conv9 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge9)
-    conv9 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
-    conv9 = Conv2D(2, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
-    conv10 = Conv2D(1, 1, activation = 'sigmoid')(conv9)
-
-    model = Model(input = inputs, output = conv10)
-    print(GPU_list)
-    parallel_model = multi_gpu_model(model, gpus=GPU_list)
-    parallel_model.compile(optimizer = Adam(lr = 1e-3), loss = 'binary_crossentropy', metrics = ['accuracy'])
-    #model.summary()
-
-    if(pretrained_weights):
-    	model.load_weights(pretrained_weights)
-
-    return parallel_model
 
 def standard_unit(input_tensor, stage, nb_filter, kernel_size=3):
 
@@ -349,6 +281,7 @@ def BN_act_conv(x,nb_filter, dropout_rate=0.2):
 
     return x
 
+
 def transitionDown(x, nb_filter, dropout_rate=0.2):
 
     x = BatchNormalization()(x)
@@ -358,6 +291,7 @@ def transitionDown(x, nb_filter, dropout_rate=0.2):
     x = MaxPooling2D((2, 2), strides=(2, 2))(x)
  
     return x
+
 
 def transitionUp(x, nb_filter, dropout_rate=0.2):
 
@@ -369,7 +303,6 @@ def transitionUp(x, nb_filter, dropout_rate=0.2):
                         kernel_initializer='VarianceScaling')(x)
  
     return x
-
 
 
 def BN_ReLU_Conv(inputs, n_filters, filter_size=3, dropout_p=0.2):
@@ -410,6 +343,7 @@ def TransitionUp(skip_connection, block_to_upsample, n_filters_keep):
     return l
     # Note : we also tried Subpixel Deconvolution without seeing any improvements.
     # We can reduce the number of parameters reducing n_filters_keep in the Deconvolution
+
 
 def DenseNet (input_shape=(512,512,1),
              n_classes=1,
@@ -514,111 +448,4 @@ def DenseNet (input_shape=(512,512,1),
     model = Model(input=inputs, output=last_conv)
     model.compile(optimizer = Adam(lr = 1e-3), loss = 'binary_crossentropy', metrics = ['accuracy'])
 
-    return model
-
-def DenseNet_multiGPU (input_shape=(512,512,1),
-             GPU_numb=8,
-             n_classes=1,
-             n_filters_first_conv=48,
-             n_pool=4,
-             growth_rate=16,
-             n_layers_per_block=5,
-             dropout_p=0.2):
-
-    """
-    This code implements the Fully Convolutional DenseNet described in https://arxiv.org/abs/1611.09326
-    The network consist of a downsampling path, where dense blocks and transition down are applied, followed
-    by an upsampling path where transition up and dense blocks are applied.
-    Skip connections are used between the downsampling path and the upsampling path
-    Each layer is a composite function of BN - ReLU - Conv and the last layer is a softmax layer.
-    :param input_shape: shape of the input batch. Only the first dimension (n_channels) is needed
-    :param n_classes: number of classes
-    :param n_filters_first_conv: number of filters for the first convolution applied
-    :param n_pool: number of pooling layers = number of transition down = number of transition up
-    :param growth_rate: number of new feature maps created by each layer in a dense block
-    :param n_layers_per_block: number of layers per block. Can be an int or a list of size 2 * n_pool + 1
-    :param dropout_p: dropout rate applied after each convolution (0. for not using)
-    """
-
-    if type(n_layers_per_block) == list:
-        assert (len(n_layers_per_block) == 2 * n_pool + 1)
-    elif type(n_layers_per_block) == int:
-        n_layers_per_block = [n_layers_per_block] * (2 * n_pool + 1)
-    else:
-        raise ValueError
-
-    inputs = Input(input_shape)
-
-
-    #####################
-    # First Convolution #
-    #####################
-    
-    # We perform a first convolution. All the features maps will be stored in the tensor called stack
-    stack = Conv2D(48, (3, 3), kernel_initializer="he_uniform", padding="same", name="initial_conv2D")(inputs)
-    
-    # The number of feature maps in the stack is stored in the variable n_filters
-    n_filters = n_filters_first_conv
-
-    #####################
-    # Downsampling path #
-    #####################
-
-    skip_connection_list = []
-
-    for i in range(n_pool):
-        # Dense Block
-        for j in range(n_layers_per_block[i]):
-            # Compute new feature maps
-            l = BN_ReLU_Conv(stack, growth_rate, dropout_p=dropout_p)
-            # And stack it : the Tiramisu is growing
-            stack = concatenate([stack, l], axis=3)
-            n_filters += growth_rate
-        # At the end of the dense block, the current stack is stored in the skip_connections list
-        skip_connection_list.append(stack)
-
-        # Transition Down
-        stack = TransitionDown(stack, n_filters, dropout_p)
-
-    skip_connection_list = skip_connection_list[::-1]
-
-    #####################
-    #     Bottleneck    #
-    #####################
-
-    # We store now the output of the next dense block in a list. We will only upsample these new feature maps
-    block_to_upsample = []
-
-    # Dense Block
-    for j in range(n_layers_per_block[n_pool]):
-        l = BN_ReLU_Conv(stack, growth_rate, dropout_p=dropout_p)
-        block_to_upsample.append(l)
-        stack = concatenate([stack, l], axis=3)
-
-    #######################
-    #   Upsampling path   #
-    #######################
-
-    for i in range(n_pool):
-        # Transition Up ( Upsampling + concatenation with the skip connection)
-        n_filters_keep = growth_rate * n_layers_per_block[n_pool + i]
-        stack = TransitionUp(skip_connection_list[i], block_to_upsample, n_filters_keep)
-
-        # Dense Block
-        block_to_upsample = []
-        for j in range(n_layers_per_block[n_pool + i + 1]):
-            l = BN_ReLU_Conv(stack, growth_rate, dropout_p=dropout_p)
-            block_to_upsample.append(l)
-            stack = concatenate([stack, l], axis=3)
-
-    #####################
-    #      Softmax      #
-    #####################
-    
-    last_conv = Conv2D(n_classes, (1, 1), kernel_initializer="he_uniform", padding="same", activation='softmax', name="last_conv2D")(stack)
-    
-    model = Model(input=inputs, output=last_conv)
-    parallel_model = multi_gpu_model(model, GPU_numb)
-    parallel_model.compile(optimizer = Adam(lr = 1e-3), loss = 'binary_crossentropy', metrics = ['accuracy'])
-    
     return model
